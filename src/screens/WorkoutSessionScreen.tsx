@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Vibration, View } from 'react-native';
+import { Vibration, View, TouchableOpacity } from 'react-native';
 import styled from 'styled-components/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
 import { StorageService } from '../services/StorageService';
+import { VoiceService } from '../services/VoiceService'; // Import novo
 import { Card } from '../components/ui/Card';
 
 interface WorkoutItem {
   id: string;
   name: string;
   category: string;
-  phaseColor: string; // A cor da fase (Laranja, Ciano, Roxo)
+  phaseColor: string;
   duration: number;
   rest: number;
 }
@@ -23,6 +24,9 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
   const [timeLeft, setTimeLeft] = useState(5);
   const [isActive, setIsActive] = useState(false);
   const [rpe, setRpe] = useState(5);
+  
+  // Controle de Áudio
+  const [isMuted, setIsMuted] = useState(false);
 
   if (!workout || workout.length === 0) {
     return (
@@ -35,24 +39,53 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
 
   const currentExercise = workout[exerciseIndex];
 
+  // Efeito para tocar áudio quando muda o exercício ou fase
+  useEffect(() => {
+    if (isMuted) return;
+
+    if (status === 'PREPARE') {
+      VoiceService.speak("Prepare-se.");
+    } else if (status === 'REST') {
+      VoiceService.speak("Descanso.");
+    } else if (status === 'WORK') {
+      // Anuncia o nome do exercício
+      VoiceService.announceExercise(currentExercise.name, currentExercise.duration);
+    }
+  }, [status, exerciseIndex, isMuted]);
+
+  // O Relógio Central
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isActive && timeLeft > 0) {
-      interval = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
+      interval = setInterval(() => {
+        setTimeLeft((prev) => {
+          const newVal = prev - 1;
+          
+          // CONTAGEM REGRESSIVA (3, 2, 1)
+          if (!isMuted && newVal <= 3 && newVal > 0) {
+            VoiceService.countdown(newVal);
+          }
+          // SOM DE "VAI" OU "ACABOU"
+          if (!isMuted && newVal === 0) {
+             Vibration.vibrate(500);
+             // Pequeno beep ou palavra
+             VoiceService.speak(status === 'REST' ? "Vai!" : "Pare.");
+          }
+
+          return newVal;
+        });
+      }, 1000);
     } else if (timeLeft === 0 && isActive) {
       handlePhaseChange();
     }
     return () => clearInterval(interval);
-  }, [isActive, timeLeft]);
+  }, [isActive, timeLeft, isMuted, status]);
 
   const handlePhaseChange = async () => {
-    Vibration.vibrate(500);
-
     if (status === 'PREPARE') {
       setStatus('WORK');
       setTimeLeft(currentExercise.duration);
     } else if (status === 'WORK') {
-      // Se o descanso for 0, pula direto pro próximo (ex: alongamentos rápidos)
       if (currentExercise.rest === 0) {
         nextExercise();
       } else {
@@ -72,13 +105,13 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
     } else {
       setStatus('FEEDBACK');
       setIsActive(false);
+      VoiceService.speak("Treino concluído. Como foi?");
     }
   };
 
   const saveWorkout = async () => {
     const totalTimeSeconds = workout.reduce((acc: number, item: WorkoutItem) => acc + item.duration + item.rest, 0);
     const totalMinutes = Math.ceil(totalTimeSeconds / 60);
-    // Salvamos apenas os nomes do bloco principal para não poluir o histórico, ou tudo se preferir
     const exerciseNames = workout.map((item: WorkoutItem) => item.name);
 
     await StorageService.registerWorkout(totalMinutes, exerciseNames, rpe);
@@ -86,19 +119,22 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
   };
 
   const toggleTimer = () => setIsActive(!isActive);
+  
+  // Limpar a fala ao sair da tela
+  useEffect(() => {
+    return () => VoiceService.stop();
+  }, []);
 
-  // --- LÓGICA DE CORES INTELIGENTE ---
   const getBackgroundColor = () => {
     switch (status) {
-      case 'REST': return '#FF4444'; // Vermelho Padrão de Descanso
+      case 'REST': return '#FF4444';
       case 'FEEDBACK': return '#142332';
       case 'FINISHED': return '#00cdcd';
-      case 'WORK': return currentExercise.phaseColor || '#00cdcd'; // Usa a cor da fase (Laranja/Roxo/Ciano)
+      case 'WORK': return currentExercise.phaseColor || '#00cdcd';
       default: return '#142332';
     }
   };
 
-  // TELA DE FEEDBACK
   if (status === 'FEEDBACK') {
     return (
       <Container style={{ backgroundColor: getBackgroundColor() }}>
@@ -117,7 +153,6 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
     );
   }
 
-  // TELA FINAL
   if (status === 'FINISHED') {
     return (
       <Container style={{ backgroundColor: getBackgroundColor() }}>
@@ -127,12 +162,19 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
     );
   }
 
-  // PLAYER
   return (
     <Container style={{ backgroundColor: getBackgroundColor() }}>
-      <PhaseBadge>
-        <PhaseText>FASE: {currentExercise.category.toUpperCase()}</PhaseText>
-      </PhaseBadge>
+      
+      {/* HEADER SUPERIOR COM MUTE */}
+      <TopBar>
+        <PhaseBadge>
+          <PhaseText>FASE: {currentExercise.category.toUpperCase()}</PhaseText>
+        </PhaseBadge>
+        
+        <MuteButton onPress={() => setIsMuted(!isMuted)}>
+          <MuteText>{isMuted ? '🔇' : '🔊'}</MuteText>
+        </MuteButton>
+      </TopBar>
 
       <Header>
         <Label>
@@ -168,8 +210,25 @@ export const WorkoutSessionScreen = ({ route, navigation }: any) => {
 
 // Estilos
 const Container = styled(SafeAreaView)` flex: 1; padding: 24px; justify-content: space-between; `;
-const PhaseBadge = styled.View` background-color: rgba(0,0,0,0.3); align-self: center; padding: 4px 12px; border-radius: 12px; margin-bottom: 10px; `;
+
+// Novo TopBar para alinhar Badge e Mute
+const TopBar = styled.View`
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+`;
+
+const PhaseBadge = styled.View` background-color: rgba(0,0,0,0.3); padding: 4px 12px; border-radius: 12px; `;
 const PhaseText = styled.Text` color: #FFF; font-size: 10px; font-weight: bold; letter-spacing: 1px; `;
+
+const MuteButton = styled.TouchableOpacity`
+  background-color: rgba(255,255,255,0.1);
+  width: 40px; height: 40px;
+  border-radius: 20px;
+  align-items: center; justify-content: center;
+`;
+const MuteText = styled.Text` font-size: 20px; `;
 
 const Header = styled.View` align-items: center; margin-top: 10px; `;
 const Label = styled.Text` color: rgba(255,255,255,0.8); font-weight: bold; margin-bottom: 8px; `;
