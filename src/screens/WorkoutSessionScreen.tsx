@@ -1,88 +1,152 @@
 import React, { useState, useEffect } from 'react';
-import { Vibration } from 'react-native';
+import { Vibration, View } from 'react-native';
 import styled from 'styled-components/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
+import { StorageService } from '../services/StorageService';
+import { Card } from '../components/ui/Card';
 
-// Mock de um treino ativo
-const MOCK_WORKOUT = [
-  { id: '1', name: 'Dead Hang (Reglete)', duration: 10, rest: 5 },
-  { id: '2', name: 'Pull-ups', duration: 15, rest: 10 },
-  { id: '3', name: 'Plank', duration: 20, rest: 10 },
-];
+interface WorkoutItem {
+  id: string;
+  name: string;
+  category: string;
+  phaseColor: string; // A cor da fase (Laranja, Ciano, Roxo)
+  duration: number;
+  rest: number;
+}
 
-export const WorkoutSessionScreen = () => {
+export const WorkoutSessionScreen = ({ route, navigation }: any) => {
+  const { workout } = route.params || { workout: [] };
+  
   const [exerciseIndex, setExerciseIndex] = useState(0);
-  const [status, setStatus] = useState<'PREPARE' | 'WORK' | 'REST' | 'FINISHED'>('PREPARE');
+  const [status, setStatus] = useState<'PREPARE' | 'WORK' | 'REST' | 'FEEDBACK' | 'FINISHED'>('PREPARE');
   const [timeLeft, setTimeLeft] = useState(5);
   const [isActive, setIsActive] = useState(false);
+  const [rpe, setRpe] = useState(5);
 
-  const currentExercise = MOCK_WORKOUT[exerciseIndex];
+  if (!workout || workout.length === 0) {
+    return (
+      <Container style={{ backgroundColor: '#142332' }}>
+        <BigText>NENHUM TREINO</BigText>
+        <Button title="VOLTAR" onPress={() => navigation.goBack()} />
+      </Container>
+    );
+  }
 
-  // O Coração do Cronômetro
+  const currentExercise = workout[exerciseIndex];
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
-
     if (isActive && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
+      interval = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     } else if (timeLeft === 0 && isActive) {
       handlePhaseChange();
     }
-
     return () => clearInterval(interval);
   }, [isActive, timeLeft]);
 
-  // A Lógica de Transição de Fases
-  const handlePhaseChange = () => {
+  const handlePhaseChange = async () => {
     Vibration.vibrate(500);
 
     if (status === 'PREPARE') {
       setStatus('WORK');
       setTimeLeft(currentExercise.duration);
     } else if (status === 'WORK') {
-      setStatus('REST');
-      setTimeLeft(currentExercise.rest);
-    } else if (status === 'REST') {
-      if (exerciseIndex + 1 < MOCK_WORKOUT.length) {
-        setExerciseIndex(exerciseIndex + 1);
-        setStatus('WORK');
-        setTimeLeft(MOCK_WORKOUT[exerciseIndex + 1].duration);
+      // Se o descanso for 0, pula direto pro próximo (ex: alongamentos rápidos)
+      if (currentExercise.rest === 0) {
+        nextExercise();
       } else {
-        setStatus('FINISHED');
-        setIsActive(false);
+        setStatus('REST');
+        setTimeLeft(currentExercise.rest);
       }
+    } else if (status === 'REST') {
+      nextExercise();
     }
+  };
+
+  const nextExercise = () => {
+    if (exerciseIndex + 1 < workout.length) {
+      setExerciseIndex(exerciseIndex + 1);
+      setStatus('WORK');
+      setTimeLeft(workout[exerciseIndex + 1].duration);
+    } else {
+      setStatus('FEEDBACK');
+      setIsActive(false);
+    }
+  };
+
+  const saveWorkout = async () => {
+    const totalTimeSeconds = workout.reduce((acc: number, item: WorkoutItem) => acc + item.duration + item.rest, 0);
+    const totalMinutes = Math.ceil(totalTimeSeconds / 60);
+    // Salvamos apenas os nomes do bloco principal para não poluir o histórico, ou tudo se preferir
+    const exerciseNames = workout.map((item: WorkoutItem) => item.name);
+
+    await StorageService.registerWorkout(totalMinutes, exerciseNames, rpe);
+    setStatus('FINISHED');
   };
 
   const toggleTimer = () => setIsActive(!isActive);
 
-  if (status === 'FINISHED') {
+  // --- LÓGICA DE CORES INTELIGENTE ---
+  const getBackgroundColor = () => {
+    switch (status) {
+      case 'REST': return '#FF4444'; // Vermelho Padrão de Descanso
+      case 'FEEDBACK': return '#142332';
+      case 'FINISHED': return '#00cdcd';
+      case 'WORK': return currentExercise.phaseColor || '#00cdcd'; // Usa a cor da fase (Laranja/Roxo/Ciano)
+      default: return '#142332';
+    }
+  };
+
+  // TELA DE FEEDBACK
+  if (status === 'FEEDBACK') {
     return (
-      <Container status={status}>
-        <BigText>TREINO CONCLUÍDO!</BigText>
-        <SubText>Bom trabalho, Gustavo.</SubText>
-        <Button title="Voltar ao Menu" onPress={() => {}} />
+      <Container style={{ backgroundColor: getBackgroundColor() }}>
+        <BigText>FIM DO TREINO!</BigText>
+        <SubText>Intensidade da Sessão:</SubText>
+        <Card>
+          <RpeValue style={{ color: rpe > 7 ? '#FF4444' : rpe < 4 ? '#44FF44' : '#FFFF44' }}>{rpe}</RpeValue>
+          <Row>
+            <MiniButton onPress={() => setRpe(Math.max(1, rpe - 1))}>-</MiniButton>
+            <View style={{ width: 20 }} />
+            <MiniButton onPress={() => setRpe(Math.min(10, rpe + 1))}>+</MiniButton>
+          </Row>
+        </Card>
+        <Button title="SALVAR" onPress={saveWorkout} />
       </Container>
     );
   }
 
+  // TELA FINAL
+  if (status === 'FINISHED') {
+    return (
+      <Container style={{ backgroundColor: getBackgroundColor() }}>
+        <BigText>SALVO!</BigText>
+        <Button title="VOLTAR" onPress={() => navigation.navigate('Dashboard')} />
+      </Container>
+    );
+  }
+
+  // PLAYER
   return (
-    <Container status={status}>
-      {/* Cabeçalho */}
+    <Container style={{ backgroundColor: getBackgroundColor() }}>
+      <PhaseBadge>
+        <PhaseText>FASE: {currentExercise.category.toUpperCase()}</PhaseText>
+      </PhaseBadge>
+
       <Header>
-        <Label>{status === 'WORK' ? 'EXECUTANDO:' : status === 'REST' ? 'PRÓXIMO:' : 'PREPARAR'}</Label>
+        <Label>
+          {status === 'WORK' ? 'EXECUTANDO' : status === 'REST' ? 'DESCANSE' : 'PREPARAR'} 
+          {' '}({exerciseIndex + 1}/{workout.length})
+        </Label>
         <ExerciseTitle>{currentExercise.name}</ExerciseTitle>
       </Header>
-
-      {/* O Relógio Gigante */}
+      
       <TimerWrapper>
         <TimerText>{timeLeft}</TimerText>
         <TimerLabel>SEGUNDOS</TimerLabel>
       </TimerWrapper>
 
-      {/* Controles */}
       <Controls>
         <Button 
           title={isActive ? "PAUSAR" : "INICIAR"} 
@@ -90,7 +154,7 @@ export const WorkoutSessionScreen = () => {
           onPress={toggleTimer}
         />
         <Button 
-          title="PULAR EXERCÍCIO" 
+          title="PULAR >>" 
           variant="secondary" 
           onPress={() => {
              setStatus('REST');
@@ -102,77 +166,20 @@ export const WorkoutSessionScreen = () => {
   );
 };
 
-// --- MUDANÇA: Função auxiliar movida para fora do componente ---
-const getBackgroundColor = (status: string, theme: any) => {
-  switch (status) {
-    case 'WORK': return theme.COLORS.SUCCESS; // Verde
-    case 'REST': return theme.COLORS.DANGER;  // Vermelho
-    case 'FINISHED': return theme.COLORS.PRIMARY; // Ciano
-    default: return theme.COLORS.BACKGROUND;  // Azul Escuro
-  }
-};
+// Estilos
+const Container = styled(SafeAreaView)` flex: 1; padding: 24px; justify-content: space-between; `;
+const PhaseBadge = styled.View` background-color: rgba(0,0,0,0.3); align-self: center; padding: 4px 12px; border-radius: 12px; margin-bottom: 10px; `;
+const PhaseText = styled.Text` color: #FFF; font-size: 10px; font-weight: bold; letter-spacing: 1px; `;
 
-// Estilização
-const Container = styled(SafeAreaView)<any>`
-  flex: 1;
-  /* Agora chamamos a função passando o status e o tema */
-  background-color: ${(props: any) => getBackgroundColor(props.status, props.theme)};
-  padding: 24px;
-  justify-content: space-between;
-`;
-
-const Header = styled.View`
-  align-items: center;
-  margin-top: 20px;
-`;
-
-const Label = styled.Text<any>`
-  color: rgba(255,255,255,0.8);
-  font-family: ${(props: any) => props.theme.FONTS.BOLD};
-  font-size: 14px;
-  margin-bottom: 8px;
-`;
-
-const ExerciseTitle = styled.Text<any>`
-  color: #FFF;
-  font-family: ${(props: any) => props.theme.FONTS.BOLD};
-  font-size: 32px;
-  text-align: center;
-`;
-
-const TimerWrapper = styled.View`
-  align-items: center;
-  justify-content: center;
-`;
-
-const TimerText = styled.Text<any>`
-  color: #FFF;
-  font-family: ${(props: any) => props.theme.FONTS.BOLD};
-  font-size: 120px;
-  text-shadow: 0px 4px 10px rgba(0,0,0,0.3);
-`;
-
-const TimerLabel = styled.Text`
-  color: #FFF;
-  font-size: 16px;
-  letter-spacing: 4px;
-`;
-
-const Controls = styled.View`
-  width: 100%;
-`;
-
-const BigText = styled.Text`
-  color: #FFF;
-  font-size: 40px;
-  font-weight: bold;
-  text-align: center;
-  margin-top: 100px;
-`;
-
-const SubText = styled.Text`
-  color: #FFF;
-  font-size: 18px;
-  text-align: center;
-  margin-bottom: 50px;
-`;
+const Header = styled.View` align-items: center; margin-top: 10px; `;
+const Label = styled.Text` color: rgba(255,255,255,0.8); font-weight: bold; margin-bottom: 8px; `;
+const ExerciseTitle = styled.Text` color: #FFF; font-weight: bold; font-size: 32px; text-align: center; `;
+const TimerWrapper = styled.View` align-items: center; justify-content: center; `;
+const TimerText = styled.Text` color: #FFF; font-weight: bold; font-size: 120px; text-shadow: 0px 4px 10px rgba(0,0,0,0.3); `;
+const TimerLabel = styled.Text` color: #FFF; font-size: 16px; letter-spacing: 4px; `;
+const Controls = styled.View` width: 100%; `;
+const BigText = styled.Text` color: #FFF; font-size: 40px; font-weight: bold; text-align: center; margin-top: 40px; `;
+const SubText = styled.Text` color: #FFF; font-size: 18px; text-align: center; margin-bottom: 20px; `;
+const Row = styled.View` flex-direction: row; justify-content: center; margin-top: 20px; `;
+const MiniButton = styled.Text` background-color: rgba(255,255,255,0.1); color: #FFF; padding: 15px 30px; border-radius: 8px; font-size: 24px; font-weight: bold; overflow: hidden; `;
+const RpeValue = styled.Text` font-size: 80px; font-weight: bold; text-align: center; margin-bottom: 10px; `;
