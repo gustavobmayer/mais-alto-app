@@ -4,8 +4,9 @@ import styled from 'styled-components/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
 import { Card, CardTitle } from '../components/ui/Card';
-import { EXERCISES } from '../data/exercises';
+import { EXERCISES_V2 } from '../data/exercises'; // Fonte V2
 import { CoachService } from '../services/CoachService';
+import { ExerciseDataV2 } from '../data/types';
 
 export const GeneratorScreen = ({ navigation }: any) => {
   const [painLevel, setPainLevel] = useState(0); 
@@ -13,27 +14,35 @@ export const GeneratorScreen = ({ navigation }: any) => {
   
   const [generatedWorkout, setWorkout] = useState<any[]>([]);
   const [coachStrategy, setCoachStrategy] = useState<any>(null);
+  const lang = 'pt';
 
   const handleGenerate = async () => {
-    // 1. Consulta o Coach (Inteligência)
+    // 1. Coach define a estratégia
     const prescription = await CoachService.analyzeReadiness();
     setCoachStrategy(prescription);
 
-    // 2. Aplica Filtros Básicos (Segurança)
-    let filteredList = [...EXERCISES];
+    // 2. Filtro de Segurança
+    let filteredList = [...EXERCISES_V2];
     
+    // Filtro básico de dor (futuramente será mais complexo)
     if (painLevel > 4) {
-      filteredList = filteredList.filter(ex => !ex.tags.includes('Crimp'));
-    }
-    if (isAmputee) {
-      filteredList = filteredList.filter(ex => !ex.tags.includes('HighImpact'));
+      // Remove exercícios de "Crimp" ou dedo intenso
+      filteredList = filteredList.filter(ex => !ex.tags.includes('Dedos'));
     }
 
-    // 3. Aplica Estratégia do Coach (AGORA COM AWAIT)
-    // O erro estava aqui: o Coach precisa de tempo para buscar o aquecimento ideal
-    const finalWorkout = await CoachService.applyStrategy(filteredList, prescription);
+    // 3. O Coach monta a sessão (Atenção: CoachService precisa ser atualizado depois para entender V2)
+    // Por enquanto, vamos fazer uma adaptação manual simples para exibir a lista
+    const session = filteredList.map(ex => ({
+        ...ex,
+        // Adaptamos para o formato que a Tela de Sessão espera (flat)
+        name: ex.names[lang], 
+        category: ex.tags[0] || 'Geral',
+        duration: 30, // Padrão
+        rest: 30,     // Padrão
+        phaseColor: '#00cdcd'
+    }));
     
-    setWorkout(finalWorkout);
+    setWorkout(session);
   };
 
   const startSession = () => {
@@ -44,11 +53,11 @@ export const GeneratorScreen = ({ navigation }: any) => {
   return (
     <Container>
       <ScrollView contentContainerStyle={{ padding: 24 }}>
-        <Header>COACH ADAPTATIVO</Header>
+        <Header>COACH V2</Header>
         
         <Card>
-          <CardTitle>Check-in Diário</CardTitle>
-          <Label>Dor no Dedo (0-10): <Value>{painLevel}</Value></Label>
+          <CardTitle>Check-in</CardTitle>
+          <Label>Nível de Dor: <Value>{painLevel}</Value></Label>
           <Row>
             <MiniButton onPress={() => setPainLevel(Math.max(0, painLevel - 1))}>-</MiniButton>
             <MiniButton onPress={() => setPainLevel(Math.min(10, painLevel + 1))}>+</MiniButton>
@@ -58,58 +67,37 @@ export const GeneratorScreen = ({ navigation }: any) => {
             variant="secondary"
             onPress={() => setIsAmputee(!isAmputee)}
           />
-          <Button title="ANALISAR E GERAR" onPress={handleGenerate} />
+          <Button title="GERAR TREINO" onPress={handleGenerate} />
         </Card>
 
-        {/* CARTÃO DE INSIGHT DO COACH */}
+        {/* ESTRATÉGIA DO COACH */}
         {coachStrategy && generatedWorkout.length > 0 && (
           <CoachCard color={coachStrategy.color}>
-            <CoachLabel>ESTRATÉGIA DO DIA:</CoachLabel>
             <CoachTitle style={{ color: coachStrategy.color }}>
-              {coachStrategy.strategy === 'RECOVERY' ? '🍃 RECUPERAÇÃO' : 
-               coachStrategy.strategy === 'OVERLOAD' ? '🔥 SOBRECARGA' : '⚖️ MANUTENÇÃO'}
+              {coachStrategy.strategy === 'RECOVERY' ? '🍃 RECUPERAÇÃO' : '🔥 TREINO TÉCNICO'}
             </CoachTitle>
             <CoachText>{coachStrategy.message}</CoachText>
-            
-            <StatRow>
-              <View>
-                <StatLabel>DESCANSO</StatLabel>
-                <StatValue>{coachStrategy.restModifier}x</StatValue>
-              </View>
-              <View>
-                <StatLabel>VOLUME</StatLabel>
-                <StatValue>{coachStrategy.volumeModifier === 0 ? 'NORMAL' : coachStrategy.volumeModifier}</StatValue>
-              </View>
-            </StatRow>
           </CoachCard>
         )}
 
+        {/* LISTA DE EXERCÍCIOS */}
         {generatedWorkout.length > 0 && (
           <>
-            <Title>Sessão Completa ({generatedWorkout.length} etapas)</Title>
-            
-            <Button 
-              title="▶  INICIAR SESSÃO" 
-              variant="primary" 
-              onPress={startSession}
-            />
-
-            <Subtitle>Estrutura: Warmup ➔ Main ➔ Cooldown</Subtitle>
+            <Title>Sessão Gerada</Title>
+            <Button title="▶  INICIAR" variant="primary" onPress={startSession} />
             
             {generatedWorkout.map((ex: any, index: number) => (
               <TouchableOpacity 
-                key={index} // Usamos index pois agora temos exercícios repetidos ou injetados sem ID único fixo
+                key={index}
                 onPress={() => navigation.navigate('ExerciseDetail', { exercise: ex })}
               >
-                <ExerciseCard style={{ borderLeftColor: ex.phaseColor || '#00cdcd' }}>
+                <ExerciseCard>
                   <ExerciseHeader>
-                    <ExerciseName>{ex.name}</ExerciseName>
-                    <LevelBadge>{ex.category}</LevelBadge>
+                    <ExerciseName>{ex.names ? ex.names[lang] : ex.name}</ExerciseName>
+                    <LevelBadge>{ex.level}</LevelBadge>
                   </ExerciseHeader>
-                  <Tags>
-                    {ex.duration}s ON / {ex.rest}s OFF • {ex.tags ? ex.tags.slice(0,2).join(', ') : 'Geral'}
-                  </Tags>
-                  <Arrow style={{ color: ex.phaseColor || '#00cdcd' }}>➔</Arrow>
+                  <Tags>{ex.tags ? ex.tags.join(' • ') : 'Geral'}</Tags>
+                  <Arrow>➔</Arrow>
                 </ExerciseCard>
               </TouchableOpacity>
             ))}
@@ -129,7 +117,6 @@ const Value = styled.Text<any>` color: ${(props: any) => props.theme.COLORS.DANG
 const Row = styled.View` flex-direction: row; margin-bottom: 16px; gap: 10px; `;
 const MiniButton = styled.Text<any>` background-color: ${(props: any) => props.theme.COLORS.SURFACE_LIGHT}; color: #FFF; padding: 10px 20px; border-radius: 8px; font-size: 20px; overflow: hidden; `;
 const Title = styled.Text` color: #FFF; font-size: 18px; margin: 20px 0 10px; font-weight: bold; `;
-const Subtitle = styled.Text` color: #666; font-size: 12px; margin-bottom: 10px; `;
 
 const ExerciseCard = styled.View<any>` background-color: ${(props: any) => props.theme.COLORS.SURFACE}; padding: 16px; border-radius: 8px; margin-bottom: 8px; border-left-width: 4px; border-left-color: ${(props: any) => props.theme.COLORS.PRIMARY}; position: relative; `;
 const ExerciseHeader = styled.View` flex-direction: row; justify-content: space-between; align-items: center; `;
@@ -138,16 +125,6 @@ const LevelBadge = styled.Text<any>` color: ${(props: any) => props.theme.COLORS
 const Tags = styled.Text` color: #888; font-size: 12px; margin-top: 4px; `;
 const Arrow = styled.Text<any>` position: absolute; right: 16px; bottom: 16px; color: ${(props: any) => props.theme.COLORS.PRIMARY}; font-size: 20px; `;
 
-const CoachCard = styled.View<{ color: string }>`
-  background-color: rgba(0,0,0,0.3);
-  border: 1px solid ${(props: any) => props.color};
-  padding: 16px;
-  border-radius: 12px;
-  margin-top: 20px;
-`;
-const CoachLabel = styled.Text` color: #888; font-size: 10px; letter-spacing: 2px; margin-bottom: 4px; `;
+const CoachCard = styled.View<{ color: string }>` background-color: rgba(0,0,0,0.3); border: 1px solid ${(props: any) => props.color}; padding: 16px; border-radius: 12px; margin-top: 20px; `;
 const CoachTitle = styled.Text` font-size: 20px; font-weight: bold; margin-bottom: 8px; `;
-const CoachText = styled.Text` color: #DDD; font-size: 14px; margin-bottom: 16px; font-style: italic; `;
-const StatRow = styled.View` flex-direction: row; gap: 30px; border-top-width: 1px; border-top-color: rgba(255,255,255,0.1); padding-top: 10px; `;
-const StatLabel = styled.Text` color: #888; font-size: 8px; `;
-const StatValue = styled.Text` color: #FFF; font-size: 14px; font-weight: bold; `;
+const CoachText = styled.Text` color: #DDD; font-size: 14px; font-style: italic; `;
